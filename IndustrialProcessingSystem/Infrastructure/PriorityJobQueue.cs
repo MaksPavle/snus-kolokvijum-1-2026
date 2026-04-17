@@ -8,6 +8,17 @@ public class PriorityJobQueue
     private readonly object _lock = new();
     private readonly SemaphoreSlim _signal = new(0);
 
+    public int Count
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _queue.Count;
+            }
+        }
+    }
+
     public bool Enqueue(Job job, int maxSize)
     {
         lock (_lock)
@@ -28,6 +39,19 @@ public class PriorityJobQueue
         lock (_lock)
         {
             return _queue.Dequeue();
+        }
+    }
+
+    public List<Job> GetTopJobs(int n)
+    {
+        lock (_lock)
+        {
+            return _queue.UnorderedItems
+                .OrderBy(x => x.Priority)
+                .ThenBy(x => x.Element.Id)
+                .Take(n)
+                .Select(x => x.Element)
+                .ToList();
         }
     }
 }
