@@ -1,19 +1,12 @@
 ﻿<SystemConfig>
-	<WorkerCount>3</WorkerCount>
-	<MaxQueueSize>20</MaxQueueSize>
+	<WorkerCount>5</WorkerCount>
+	<MaxQueueSize>100</MaxQueueSize>
 
-	<InitialJobs>
-		<Job>
-			<Id>11111111-1111-1111-1111-111111111111</Id>
-			<Type>Prime</Type>
-			<Payload>10000,4</Payload>
-			<Priority>1</Priority>
-		</Job>
-		<Job>
-			<Id>22222222-2222-2222-2222-222222222222</Id>
-			<Type>IO</Type>
-			<Payload>500</Payload>
-			<Priority>3</Priority>
-		</Job>
-	</InitialJobs>
+	<Jobs>
+		<Job Type="Prime" Payload="numbers:10000,threads:3" Priority="1"/>
+		<Job Type="Prime" Payload="numbers:20000,threads:2" Priority="2"/>
+		<Job Type="IO" Payload="delay:1000" Priority="3"/>
+		<Job Type="IO" Payload="delay:3000" Priority="3"/>
+		<Job Type="IO" Payload="delay:15000" Priority="3"/>
+	</Jobs>
 </SystemConfig>

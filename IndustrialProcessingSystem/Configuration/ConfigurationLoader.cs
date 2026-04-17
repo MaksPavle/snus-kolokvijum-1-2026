@@ -8,23 +8,28 @@ public static class ConfigurationLoader
     public static SystemConfig Load(string path)
     {
         var doc = XDocument.Load(path);
-        var root = doc.Root!;
+        var root = doc.Root ?? throw new InvalidOperationException("XML root not found.");
 
         var config = new SystemConfig
         {
-            WorkerCount = int.Parse(root.Element("WorkerCount")!.Value),
-            MaxQueueSize = int.Parse(root.Element("MaxQueueSize")!.Value)
+            WorkerCount = int.Parse(root.Element("WorkerCount")?.Value ?? "1"),
+            MaxQueueSize = int.Parse(root.Element("MaxQueueSize")?.Value ?? "10")
         };
 
-        foreach (var jobElement in root.Element("InitialJobs")!.Elements("Job"))
+        var jobsElement = root.Element("Jobs");
+
+        if (jobsElement != null)
         {
-            config.InitialJobs.Add(new Job
+            foreach (var jobElement in jobsElement.Elements("Job"))
             {
-                Id = Guid.Parse(jobElement.Element("Id")!.Value),
-                Type = Enum.Parse<JobType>(jobElement.Element("Type")!.Value),
-                Payload = jobElement.Element("Payload")!.Value,
-                Priority = int.Parse(jobElement.Element("Priority")!.Value)
-            });
+                config.InitialJobs.Add(new Job
+                {
+                    Id = Guid.NewGuid(),
+                    Type = Enum.Parse<JobType>(jobElement.Attribute("Type")?.Value ?? "IO", true),
+                    Payload = jobElement.Attribute("Payload")?.Value ?? string.Empty,
+                    Priority = int.Parse(jobElement.Attribute("Priority")?.Value ?? "5")
+                });
+            }
         }
 
         return config;

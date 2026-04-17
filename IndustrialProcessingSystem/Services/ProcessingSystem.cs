@@ -15,10 +15,27 @@ public class ProcessingSystem
     private readonly CancellationTokenSource _cts = new();
 
     private readonly int _maxQueueSize;
+    private readonly AsyncFileLogger _logger;
 
-    public ProcessingSystem(int workerCount, int maxQueueSize)
+    public event Func<Job, int, Task>? JobCompleted;
+    public event Func<Job, string, Task>? JobFailed;
+
+    public ProcessingSystem(int workerCount, int maxQueueSize, string logFilePath)
     {
         _maxQueueSize = maxQueueSize;
+        _logger = new AsyncFileLogger(logFilePath);
+
+        JobCompleted += async (job, result) =>
+        {
+            await _logger.LogAsync(
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [COMPLETED] {job.Id}, {result}");
+        };
+
+        JobFailed += async (job, error) =>
+        {
+            await _logger.LogAsync(
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [FAILED] {job.Id}, {error}");
+        };
 
         for (int i = 0; i < workerCount; i++)
         {
@@ -85,7 +102,7 @@ public class ProcessingSystem
             try
             {
                 var job = await _queue.DequeueAsync(token);
-                await ProcessJobAsync(job);
+                await ProcessJobWithRetryAsync(job);
             }
             catch (OperationCanceledException)
             {
@@ -98,23 +115,51 @@ public class ProcessingSystem
         }
     }
 
-    private async Task ProcessJobAsync(Job job)
+    private async Task ProcessJobWithRetryAsync(Job job)
     {
         if (_completedJobs.ContainsKey(job.Id))
             return;
 
-        try
-        {
-            int result = await ExecuteJobAsync(job);
+        const int maxAttempts = 3;
 
-            if (_completedJobs.TryAdd(job.Id, 0))
-            {
-                _jobResults[job.Id].TrySetResult(result);
-            }
-        }
-        catch (Exception ex)
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            _jobResults[job.Id].TrySetException(ex);
+            try
+            {
+                var executionTask = ExecuteJobAsync(job);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(2));
+
+                var completedTask = await Task.WhenAny(executionTask, timeoutTask);
+
+                if (completedTask != executionTask)
+                    throw new TimeoutException("Execution took longer than 2 seconds.");
+
+                int result = await executionTask;
+
+                if (_completedJobs.TryAdd(job.Id, 0))
+                {
+                    _jobResults[job.Id].TrySetResult(result);
+
+                    if (JobCompleted != null)
+                        await JobCompleted.Invoke(job, result);
+                }
+
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (JobFailed != null)
+                    await JobFailed.Invoke(job, $"Attempt {attempt}: {ex.Message}");
+
+                if (attempt == maxAttempts)
+                {
+                    await _logger.LogAsync(
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ABORT] {job.Id}, ignored result");
+
+                    _jobResults[job.Id].TrySetException(
+                        new Exception($"Job failed after 3 attempts. Last error: {ex.Message}"));
+                }
+            }
         }
     }
 
@@ -132,7 +177,14 @@ public class ProcessingSystem
     {
         return Task.Run(() =>
         {
-            int delayMs = int.Parse(payload);
+            var parts = payload.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length != 2 || !parts[0].Equals("delay", StringComparison.OrdinalIgnoreCase))
+                throw new FormatException("Invalid IO payload format. Expected: delay:1000");
+
+            string delayText = parts[1].Replace("_", "");
+            int delayMs = int.Parse(delayText);
+
             Thread.Sleep(delayMs);
             return Random.Shared.Next(0, 101);
         });
@@ -144,8 +196,27 @@ public class ProcessingSystem
         {
             var parts = payload.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-            int max = int.Parse(parts[0]);
-            int threadCount = parts.Length > 1 ? int.Parse(parts[1]) : 1;
+            if (parts.Length != 2)
+                throw new FormatException("Invalid Prime payload format. Expected: numbers:10000,threads:3");
+
+            string numbersPart = parts[0];
+            string threadsPart = parts[1];
+
+            var numbersSplit = numbersPart.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var threadsSplit = threadsPart.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            if (numbersSplit.Length != 2 || !numbersSplit[0].Equals("numbers", StringComparison.OrdinalIgnoreCase))
+                throw new FormatException("Invalid Prime payload numbers part.");
+
+            if (threadsSplit.Length != 2 || !threadsSplit[0].Equals("threads", StringComparison.OrdinalIgnoreCase))
+                throw new FormatException("Invalid Prime payload threads part.");
+
+            string maxText = numbersSplit[1].Replace("_", "");
+            string threadText = threadsSplit[1].Replace("_", "");
+
+            int max = int.Parse(maxText);
+            int threadCount = int.Parse(threadText);
+
             threadCount = Math.Clamp(threadCount, 1, 8);
 
             int total = 0;

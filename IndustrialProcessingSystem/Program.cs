@@ -12,40 +12,18 @@ internal class Program
         {
             var config = ConfigurationLoader.Load("config.xml");
 
-            var system = new ProcessingSystem(config.WorkerCount, config.MaxQueueSize);
+            var system = new ProcessingSystem(
+                config.WorkerCount,
+                config.MaxQueueSize,
+                "jobs.log");
 
-            Console.WriteLine("Submitting initial jobs from config...");
+            Console.WriteLine("Submitting jobs from config...");
 
             var handles = new List<JobHandle>();
 
             foreach (var job in config.InitialJobs)
             {
-                var handle = system.Submit(job);
-                handles.Add(handle);
-            }
-
-            var randomJobs = new List<Job>
-            {
-                new Job
-                {
-                    Id = Guid.NewGuid(),
-                    Type = JobType.Prime,
-                    Payload = "20000,4",
-                    Priority = 2
-                },
-                new Job
-                {
-                    Id = Guid.NewGuid(),
-                    Type = JobType.IO,
-                    Payload = "800",
-                    Priority = 1
-                }
-            };
-
-            foreach (var job in randomJobs)
-            {
-                var handle = system.Submit(job);
-                handles.Add(handle);
+                handles.Add(system.Submit(job));
             }
 
             Console.WriteLine();
@@ -53,7 +31,7 @@ internal class Program
 
             foreach (var job in system.GetTopJobs(5))
             {
-                Console.WriteLine($"{job.Id} | {job.Type} | Priority={job.Priority}");
+                Console.WriteLine($"{job.Id} | {job.Type} | Priority={job.Priority} | Payload={job.Payload}");
             }
 
             Console.WriteLine();
@@ -72,10 +50,30 @@ internal class Program
                 }
             }
 
+            Console.WriteLine();
+            Console.WriteLine("Trying duplicate submit for idempotency test...");
+
+            if (config.InitialJobs.Count > 0)
+            {
+                var duplicateJob = config.InitialJobs[0];
+                var duplicateHandle = system.Submit(duplicateJob);
+
+                try
+                {
+                    int duplicateResult = await duplicateHandle.Result;
+                    Console.WriteLine($"Duplicate submit returned existing result for {duplicateHandle.Id}: {duplicateResult}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Duplicate submit failed for {duplicateHandle.Id}: {ex.Message}");
+                }
+            }
+
             await system.StopAsync();
 
             Console.WriteLine();
             Console.WriteLine("Processing finished.");
+            Console.WriteLine("Check jobs.log file in bin\\Debug\\net8.0");
         }
         catch (Exception ex)
         {
