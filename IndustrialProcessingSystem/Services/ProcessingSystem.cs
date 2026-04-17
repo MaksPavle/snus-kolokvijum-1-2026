@@ -10,6 +10,7 @@ public class ProcessingSystem
     private readonly ConcurrentDictionary<Guid, Job> _jobs = new();
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<int>> _jobResults = new();
     private readonly ConcurrentDictionary<Guid, byte> _completedJobs = new();
+    private readonly ConcurrentBag<JobExecutionRecord> _history = new();
 
     private readonly List<Task> _workers = new();
     private readonly CancellationTokenSource _cts = new();
@@ -89,6 +90,11 @@ public class ProcessingSystem
         throw new KeyNotFoundException($"Job with id {id} not found.");
     }
 
+    public IReadOnlyCollection<JobExecutionRecord> GetHistory()
+    {
+        return _history.ToList();
+    }
+
     public async Task StopAsync()
     {
         _cts.Cancel();
@@ -124,6 +130,9 @@ public class ProcessingSystem
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            var startTime = DateTime.Now;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             try
             {
                 var executionTask = ExecuteJobAsync(job);
@@ -135,10 +144,21 @@ public class ProcessingSystem
                     throw new TimeoutException("Execution took longer than 2 seconds.");
 
                 int result = await executionTask;
+                stopwatch.Stop();
 
                 if (_completedJobs.TryAdd(job.Id, 0))
                 {
                     _jobResults[job.Id].TrySetResult(result);
+
+                    _history.Add(new JobExecutionRecord
+                    {
+                        JobId = job.Id,
+                        Type = job.Type,
+                        Success = true,
+                        Result = result,
+                        Duration = stopwatch.Elapsed,
+                        Timestamp = startTime
+                    });
 
                     if (JobCompleted != null)
                         await JobCompleted.Invoke(job, result);
@@ -148,6 +168,18 @@ public class ProcessingSystem
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
+
+                _history.Add(new JobExecutionRecord
+                {
+                    JobId = job.Id,
+                    Type = job.Type,
+                    Success = false,
+                    Result = null,
+                    Duration = stopwatch.Elapsed,
+                    Timestamp = startTime
+                });
+
                 if (JobFailed != null)
                     await JobFailed.Invoke(job, $"Attempt {attempt}: {ex.Message}");
 
