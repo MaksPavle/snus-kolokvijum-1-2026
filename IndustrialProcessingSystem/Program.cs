@@ -40,7 +40,7 @@ internal class Program
 
             var producers = new List<Task>();
 
-            for (int i = 0; i < 2; i++) // 2 producer niti
+            for (int i = 0; i < config.WorkerCount; i++)
             {
                 int producerId = i;
 

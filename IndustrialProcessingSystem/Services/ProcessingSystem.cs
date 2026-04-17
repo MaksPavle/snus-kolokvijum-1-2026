@@ -14,7 +14,7 @@ public class ProcessingSystem
 
     private readonly List<Task> _workers = new();
     private readonly CancellationTokenSource _cts = new();
-
+    
     private readonly int _maxQueueSize;
     private readonly AsyncFileLogger _logger;
 
@@ -60,6 +60,8 @@ public class ProcessingSystem
             bool enqueued = _queue.Enqueue(job, _maxQueueSize);
             if (!enqueued)
             {
+                _jobs.TryRemove(job.Id, out _);
+                _jobResults.TryRemove(job.Id, out _);
                 tcs.TrySetException(new InvalidOperationException("Queue is full."));
             }
 
@@ -170,23 +172,23 @@ public class ProcessingSystem
             {
                 stopwatch.Stop();
 
-                _history.Add(new JobExecutionRecord
-                {
-                    JobId = job.Id,
-                    Type = job.Type,
-                    Success = false,
-                    Result = null,
-                    Duration = stopwatch.Elapsed,
-                    Timestamp = startTime
-                });
-
                 if (JobFailed != null)
                     await JobFailed.Invoke(job, $"Attempt {attempt}: {ex.Message}");
 
                 if (attempt == maxAttempts)
                 {
+                    _history.Add(new JobExecutionRecord
+                    {
+                        JobId = job.Id,
+                        Type = job.Type,
+                        Success = false,
+                        Result = null,
+                        Duration = stopwatch.Elapsed,
+                        Timestamp = startTime
+                    });
+
                     await _logger.LogAsync(
-                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ABORT] {job.Id}, ignored result");
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ABORT] {job.Id}, Attempt {attempt}: {ex.Message}");
 
                     _jobResults[job.Id].TrySetException(
                         new Exception($"Job failed after 3 attempts. Last error: {ex.Message}"));
